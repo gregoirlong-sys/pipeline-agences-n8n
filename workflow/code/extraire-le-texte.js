@@ -84,6 +84,7 @@ RÈGLES DE RÉDACTION DE ligne_perso
 - Une à deux phrases, vouvoiement, écrites pour ouvrir un email à froid.
 - Elles doivent citer un élément CONCRET et VÉRIFIABLE lu sur le site : une offre nommée, un secteur servi, un outil mentionné, un parti pris affiché.
 - Interdit : la flatterie ("j'adore votre travail"), les généralités applicables à n'importe quelle agence, et toute invention. Si le site ne dit rien de précis, écris une phrase neutre et baisse le score.
+- Ponctuation : jamais de tiret cadratin ni de flèche. Ce sont des signatures d'écriture automatique, immédiatement reconnues par des fondateurs techniques. Utilise les deux-points, la virgule, le point ou la parenthèse.
 
 RÈGLE ABSOLUE : tu ne décris que ce qui est présent dans le texte fourni. Aucune donnée venue d'ailleurs, aucune supposition. Si l'information manque, mets une chaîne vide.`;
 
