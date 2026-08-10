@@ -1,0 +1,1173 @@
+{
+  "name": "Pipeline agences — enrichissement & scoring",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Lancer le run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "qualifier-agences",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Webhook (usage réel)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        580
+      ],
+      "webhookId": "a1000000-0000-4000-8000-0000000000ff"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c01",
+              "name": "modele",
+              "value": "claude-haiku-4-5",
+              "type": "string"
+            },
+            {
+              "id": "c02",
+              "name": "seuil_score",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "c03",
+              "name": "plafond_par_run",
+              "value": 40,
+              "type": "number"
+            },
+            {
+              "id": "c04",
+              "name": "delai_entre_sites_ms",
+              "value": 2000,
+              "type": "number"
+            },
+            {
+              "id": "c05",
+              "name": "taux_echec_alerte",
+              "value": 0.3,
+              "type": "number"
+            },
+            {
+              "id": "c06",
+              "name": "notion_database_id",
+              "value": "REMPLACER_PAR_VOTRE_DATABASE_ID",
+              "type": "string"
+            },
+            {
+              "id": "c07",
+              "name": "email_alerte",
+              "value": "REMPLACER_PAR_VOTRE_EMAIL",
+              "type": "string"
+            },
+            {
+              "id": "c08",
+              "name": "icp",
+              "value": "CIBLE IDÉALE (ICP)\n- Agence d'automatisation, de no-code ou d'IA, entre 2 et 15 personnes, dirigée par son fondateur.\n- Vend de la prestation à des clients finaux (elle a donc du flux à absorber), en n8n, Make, Zapier, agents IA, intégrations API, chatbots.\n- Signaux de charge : blog ou contenu récent, offres d'emploi ouvertes, mention de délais ou de capacité, page « nous recrutons ».\n- Bonus : francophone (France, Suisse, Belgique), équipe distribuée ou remote-friendly.\n\nHORS CIBLE (score bas)\n- Structure de plus de 25 personnes avec un process achat formalisé.\n- Agence purement SEO, rédaction, design ou publicité, sans automatisation ni IA.\n- Éditeur de SaaS qui vend son produit et ne fait pas de prestation.\n- Site vitrine sans activité visible, page en construction, société manifestement dormante.",
+              "type": "string"
+            },
+            {
+              "id": "c09",
+              "name": "domaines",
+              "value": "={{ $json.body?.domaines ?? [\"hyperstack.studio\", \"sequance.fr\", \"inno-mation.com\", \"genee.tech\", \"a2z-automation.com\"] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -480,
+        470
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/models",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Contrôler les credentials",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -260,
+        470
+      ],
+      "onError": "continueErrorOutput",
+      "notesInFlow": true,
+      "notes": "Un credential expiré est le mode d'échec n°1 en production : on le détecte AVANT de scraper 40 sites, pas après.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REMPLACER",
+          "name": "Anthropic — x-api-key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Préparation du run ────────────────────────────────────────\n//\n// Trois responsabilités :\n//   1. générer un identifiant de run (traçabilité + jointure des logs)\n//   2. normaliser les domaines — c'est LA clé d'idempotence, donc elle doit\n//      être stable : https://WWW.Exemple.fr/contact et exemple.fr doivent\n//      produire exactement la même clé, sinon on re-scrape et on re-facture\n//   3. dédoublonner dans le lot et appliquer le plafond du run\n\nconst config = $('Configuration').first().json;\n\nconst runId = crypto.randomUUID();\n\nfunction normaliserDomaine(entree) {\n  return String(entree)\n    .trim()\n    .toLowerCase()\n    .replace(/^https?:\\/\\//, '')\n    .replace(/^www\\./, '')\n    .replace(/\\/.*$/, '')\n    .replace(/:\\d+$/, '');\n}\n\nconst vus = new Set();\nconst domaines = [];\n\nfor (const brut of config.domaines ?? []) {\n  const domaine = normaliserDomaine(brut);\n  // Filtre minimal : il faut au moins un point et pas d'espace\n  if (!domaine || !domaine.includes('.') || /\\s/.test(domaine)) continue;\n  if (vus.has(domaine)) continue;\n  vus.add(domaine);\n  domaines.push(domaine);\n  if (domaines.length >= config.plafond_par_run) break;\n}\n\nif (domaines.length === 0) {\n  throw new Error(\"Aucun domaine exploitable en entrée — vérifier le champ 'domaines' de la Configuration.\");\n}\n\nreturn domaines.map((domaine) => ({\n  json: {\n    run_id: runId,\n    domaine,\n    url: `https://${domaine}`,\n    nb_entrees: domaines.length,\n    declencheur: $('Configuration').first().json.body ? 'webhook' : 'manuel',\n  },\n}));"
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Préparer le run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pipeline_runs (id, declencheur, nb_entrees)\nVALUES ($1::text, $2::text, $3::integer)\nON CONFLICT (id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, $json.declencheur, $json.nb_entrees] }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Ouvrir le run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        180,
+        380
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Supabase — pipeline"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le nœud 'Ouvrir le run' ne s'exécute qu'une fois (executeOnce) et ne renvoie\n// donc qu'un item. On récupère la liste complète des domaines pour alimenter\n// la boucle.\nreturn $('Préparer le run').all();"
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Reprendre les domaines",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Boucle par domaine",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        620,
+        380
+      ],
+      "notesInFlow": true,
+      "notes": "Un domaine à la fois : un site lent ne bloque pas les autres, et chaque échec reste isolé."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS deja_vu\nFROM pipeline_items\nWHERE domaine = $1::text\n  AND statut IN ('ok', 'rejete')\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.domaine] }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "Déjà traité ?",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        860,
+        480
+      ],
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "notes": "Idempotence : relancer le workflow sur la même liste ne re-scrape rien et ne re-facture rien. Les échecs, eux, restent rejouables.",
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Supabase — pipeline"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d01",
+              "leftValue": "={{ $json.deja_vu }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notExists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000a",
+      "name": "Domaine nouveau ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Boucle par domaine').item.json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "NoriaxPipeline/1.0 (+https://noriax.fr; qualification B2B; contact gregoire@noriax.fr)"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": true,
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-00000000000b",
+      "name": "Récupérer le site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        380
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "3 tentatives espacées de 3 s, timeout 15 s, User-Agent identifiable. Un site qui reste injoignable part en dead letter — il ne fait pas tomber le run."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Extraction du texte utile ─────────────────────────────────\n//\n// Un site d'agence, c'est 200 à 400 ko de HTML dont 2 % de texte. On envoie à\n// Claude uniquement ce qui porte du sens : sans ce nettoyage, on paierait\n// 50 fois le prix pour un résultat moins bon (le modèle se noie dans le CSS).\n//\n// On construit ici la requête HTTP complète, schéma JSON compris : le nœud\n// suivant ne fait que l'envoyer. Ça évite le cauchemar d'échappement des\n// expressions imbriquées et garde le prompt lisible et versionnable.\n\nconst config  = $('Configuration').first().json;\nconst source  = $('Boucle par domaine').item.json;\nconst html    = String($json.data ?? $json.body ?? '');\n\n// Les entités doivent être décodées partout, titre et meta compris. Sans ça\n// le modèle lit « C&#x27;est quoi un agent IA » et peut recopier la séquence\n// telle quelle dans la ligne de personnalisation envoyée au prospect.\nfunction decoderEntites(s) {\n  return s\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&quot;/g, '\"')\n    .replace(/&apos;/g, \"'\")\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))\n    .replace(/&#(\\d+);/g, (_, d) => String.fromCodePoint(Number(d)))\n    .replace(/&amp;/g, '&'); // en dernier, sinon on décode deux fois\n}\n\nfunction extraireTexte(html) {\n  return decoderEntites(\n    html\n      .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n      .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n      .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n      .replace(/<svg[\\s\\S]*?<\\/svg>/gi, ' ')\n      .replace(/<!--[\\s\\S]*?-->/g, ' ')\n      .replace(/<[^>]+>/g, ' ')\n  )\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nconst titre       = decoderEntites(html.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i)?.[1] ?? '').trim();\nconst description = decoderEntites(html.match(/<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']*)/i)?.[1] ?? '').trim();\nconst texte       = extraireTexte(html).slice(0, 6000);\n\n// Garde-fou : une page vide (JS-only, mur anti-bot, 200 sur une page blanche)\n// ne doit pas partir à l'analyse — on facturerait un appel pour rien et le\n// modèle inventerait une entreprise à partir de trois mots.\nif (texte.length < 200) {\n  throw new Error(`Contenu exploitable insuffisant (${texte.length} caractères) — page probablement rendue en JavaScript ou protégée.`);\n}\n\nconst schema = {\n  type: 'object',\n  properties: {\n    entreprise:     { type: 'string' },\n    ville:          { type: 'string' },\n    resume:         { type: 'string' },\n    signaux:        { type: 'array', items: { type: 'string' } },\n    score:          { type: 'integer' },\n    score_pourquoi: { type: 'string' },\n    ligne_perso:    { type: 'string' },\n  },\n  required: ['entreprise', 'ville', 'resume', 'signaux', 'score', 'score_pourquoi', 'ligne_perso'],\n  additionalProperties: false,\n};\n\nconst system = `Tu qualifies des agences pour une campagne de sous-traitance B2B. On vend de la capacité de livraison technique à des agences en surcharge — pas une prestation à des clients finaux.\n\n${config.icp}\n\nRÈGLES DE NOTATION (0 à 100)\n- 80-100 : correspond à la cible idéale sur tous les points, avec des signaux de charge visibles.\n- 60-79  : agence pertinente, mais un critère manque ou reste incertain.\n- 30-59  : activité voisine, sans automatisation ni IA au cœur de l'offre.\n- 0-29   : hors cible.\n\nRÈGLES DE RÉDACTION DE ligne_perso\n- Une à deux phrases, vouvoiement, écrites pour ouvrir un email à froid.\n- Elles doivent citer un élément CONCRET et VÉRIFIABLE lu sur le site : une offre nommée, un secteur servi, un outil mentionné, un parti pris affiché.\n- Interdit : la flatterie (\"j'adore votre travail\"), les généralités applicables à n'importe quelle agence, et toute invention. Si le site ne dit rien de précis, écris une phrase neutre et baisse le score.\n\nRÈGLE ABSOLUE : tu ne décris que ce qui est présent dans le texte fourni. Aucune donnée venue d'ailleurs, aucune supposition. Si l'information manque, mets une chaîne vide.`;\n\nconst contenu = `Domaine : ${source.domaine}\\nTitre de la page : ${titre}\\nMeta description : ${description}\\n\\nTexte du site :\\n${texte}`;\n\nreturn [{\n  json: {\n    run_id:  source.run_id,\n    domaine: source.domaine,\n    demarre_a: Date.now(),\n    corps_requete: {\n      model: config.modele,\n      max_tokens: 1024,\n      system,\n      // Sortie structurée : le schéma est appliqué côté API, donc le JSON reçu\n      // est valide par construction. Pas de parsing défensif, pas de retry\n      // sur JSON malformé — toute une classe de bugs disparaît.\n      output_config: { format: { type: 'json_schema', schema } },\n      messages: [{ role: 'user', content: contenu }],\n    },\n  },\n}];"
+      },
+      "id": "a1000000-0000-4000-8000-00000000000c",
+      "name": "Extraire le texte",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corps_requete) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-00000000000d",
+      "name": "Analyser avec Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "notes": "Claude Haiku 4.5 en sortie structurée. Retry sur 429 et 5xx ; un échec définitif part en dead letter.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REMPLACER",
+          "name": "Anthropic — x-api-key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Validation ────────────────────────────────────────────────\n//\n// La sortie structurée garantit la FORME, pas le BON SENS. On vérifie ici ce\n// que le schéma ne peut pas vérifier : bornes du score, longueurs plausibles,\n// absence de champs vides sur les clés qui pilotent la suite.\n\nconst amont  = $('Extraire le texte').item.json;\nconst source = $('Boucle par domaine').item.json;\n\nconst brut = $json.content?.[0]?.text;\nif (!brut) {\n  throw new Error(`Réponse sans bloc texte exploitable (stop_reason : ${$json.stop_reason ?? 'inconnu'})`);\n}\n\nlet a;\ntry {\n  a = JSON.parse(brut);\n} catch (e) {\n  throw new Error(`JSON illisible malgré la sortie structurée : ${String(brut).slice(0, 200)}`);\n}\n\nconst score = Number(a.score);\nif (!Number.isInteger(score) || score < 0 || score > 100) {\n  throw new Error(`Score hors bornes : ${a.score}`);\n}\nif (!a.entreprise || String(a.entreprise).trim().length < 2) {\n  throw new Error(\"Nom d'entreprise absent — le site n'a probablement pas été compris.\");\n}\nif (String(a.ligne_perso ?? '').length > 600) {\n  throw new Error('Ligne de personnalisation anormalement longue — sortie suspecte.');\n}\n\nconst usage = $json.usage ?? {};\nconst tokensIn  = usage.input_tokens  ?? 0;\nconst tokensOut = usage.output_tokens ?? 0;\n\n// Tarifs Claude Haiku 4.5 : 1 $ / MTok en entrée, 5 $ / MTok en sortie.\nconst coutUsd = (tokensIn / 1e6) * 1 + (tokensOut / 1e6) * 5;\n\nreturn [{\n  json: {\n    run_id:  source.run_id,\n    domaine: source.domaine,\n    site:    source.url,\n    entreprise:     String(a.entreprise).trim(),\n    ville:          String(a.ville ?? '').trim(),\n    resume:         String(a.resume ?? '').trim(),\n    signaux:        Array.isArray(a.signaux) ? a.signaux : [],\n    score,\n    score_pourquoi: String(a.score_pourquoi ?? '').trim(),\n    ligne_perso:    String(a.ligne_perso ?? '').trim(),\n    tokens_in:  tokensIn,\n    tokens_out: tokensOut,\n    cout_usd:   Number(coutUsd.toFixed(6)),\n    duree_ms:   Date.now() - amont.demarre_a,\n  },\n}];"
+      },
+      "id": "a1000000-0000-4000-8000-00000000000e",
+      "name": "Valider la réponse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "s01",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $('Configuration').first().json.seuil_score }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000f",
+      "name": "Score au-dessus du seuil ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $('Configuration').first().json.notion_database_id }}",
+          "mode": "id"
+        },
+        "title": "={{ $json.entreprise }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Site|url",
+              "urlValue": "={{ $json.site }}"
+            },
+            {
+              "key": "Ville|rich_text",
+              "textContent": "={{ $json.ville }}"
+            },
+            {
+              "key": "Statut|select",
+              "selectValue": "À contacter"
+            },
+            {
+              "key": "Vague|select",
+              "selectValue": "2 — n8n"
+            },
+            {
+              "key": "Notes|rich_text",
+              "textContent": "=Score {{ $json.score }}/100 — {{ $json.score_pourquoi }}\n\n{{ $json.resume }}\n\nSignaux : {{ $json.signaux.join(' · ') }}\n\n[Qualifié automatiquement le {{ $now.format('dd/MM/yyyy') }} — email de contact à trouver]"
+            },
+            {
+              "key": "Objet email|rich_text",
+              "textContent": "=Capacité de dev en renfort"
+            },
+            {
+              "key": "Email (corps)|rich_text",
+              "textContent": "={{ $json.ligne_perso }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000010",
+      "name": "Créer la fiche Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        200
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "notesInFlow": true,
+      "notes": "Le champ Email reste vide volontairement : le script d'envoi ignore les fiches sans adresse. Une adresse inventée serait pire que pas d'adresse.",
+      "credentials": {
+        "notionApi": {
+          "id": "REMPLACER",
+          "name": "Notion — base agences"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "j01",
+              "name": "statut",
+              "value": "ok",
+              "type": "string"
+            },
+            {
+              "id": "j02",
+              "name": "etape_echec",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j03",
+              "name": "erreur",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j04",
+              "name": "notion_page_id",
+              "value": "={{ $json.id ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "j05",
+              "name": "analyse",
+              "value": "={{ $('Valider la réponse').item.json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000011",
+      "name": "Retenu",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "j11",
+              "name": "statut",
+              "value": "rejete",
+              "type": "string"
+            },
+            {
+              "id": "j12",
+              "name": "etape_echec",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j13",
+              "name": "erreur",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j14",
+              "name": "notion_page_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j15",
+              "name": "analyse",
+              "value": "={{ $('Valider la réponse').item.json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000012",
+      "name": "Rejeté (sous le seuil)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2420,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "j21",
+              "name": "statut",
+              "value": "saute",
+              "type": "string"
+            },
+            {
+              "id": "j22",
+              "name": "etape_echec",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j23",
+              "name": "erreur",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j24",
+              "name": "notion_page_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j25",
+              "name": "analyse",
+              "value": "={{ { run_id: $('Boucle par domaine').item.json.run_id, domaine: $('Boucle par domaine').item.json.domaine } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000013",
+      "name": "Sauté (déjà traité)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "j31",
+              "name": "statut",
+              "value": "echec",
+              "type": "string"
+            },
+            {
+              "id": "j32",
+              "name": "etape_echec",
+              "value": "={{ $json.__etape ?? 'scrape' }}",
+              "type": "string"
+            },
+            {
+              "id": "j33",
+              "name": "erreur",
+              "value": "={{ String($json.error?.message ?? $json.error ?? $json.message ?? 'erreur non décrite').slice(0, 900) }}",
+              "type": "string"
+            },
+            {
+              "id": "j34",
+              "name": "notion_page_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "j35",
+              "name": "analyse",
+              "value": "={{ { run_id: $('Boucle par domaine').item.json.run_id, domaine: $('Boucle par domaine').item.json.domaine } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000014",
+      "name": "Échec (dead letter)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1980,
+        620
+      ],
+      "notesInFlow": true,
+      "notes": "Toutes les branches d'erreur convergent ici. La ligne est conservée avec son message : rejouable sans relancer le run entier."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pipeline_items (\n  run_id, domaine, statut, etape_echec, erreur,\n  entreprise, score, score_pourquoi, resume, ligne_perso, ville,\n  notion_page_id, duree_ms, tokens_in, tokens_out\n)\nVALUES ($1::text, $2::text, $3::text, NULLIF($4::text, ''), NULLIF($5::text, ''),\n        NULLIF($6::text, ''), $7::integer, NULLIF($8::text, ''), NULLIF($9::text, ''), NULLIF($10::text, ''), NULLIF($11::text, ''),\n        NULLIF($12::text, ''), $13::integer, $14::integer, $15::integer);",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.analyse.run_id,\n  $json.analyse.domaine,\n  $json.statut,\n  $json.etape_echec,\n  $json.erreur,\n  $json.analyse.entreprise ?? '',\n  $json.analyse.score ?? null,\n  $json.analyse.score_pourquoi ?? '',\n  $json.analyse.resume ?? '',\n  $json.analyse.ligne_perso ?? '',\n  $json.analyse.ville ?? '',\n  $json.notion_page_id,\n  $json.analyse.duree_ms ?? null,\n  $json.analyse.tokens_in ?? null,\n  $json.analyse.tokens_out ?? null\n] }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000015",
+      "name": "Journaliser l'item",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2860,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "notes": "Requête paramétrée ($1, $2…), jamais de concaténation : un nom d'entreprise avec une apostrophe ne casse rien.",
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Supabase — pipeline"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Configuration').first().json.delai_entre_sites_ms / 1000 }}",
+        "unit": "seconds"
+      },
+      "id": "a1000000-0000-4000-8000-000000000016",
+      "name": "Pause entre deux sites",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        400
+      ],
+      "webhookId": "a1000000-0000-4000-8000-0000000000fe",
+      "notesInFlow": true,
+      "notes": "On ne martèle pas les serveurs des gens qu'on veut avoir comme partenaires."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH bilan AS (\n  SELECT\n    COUNT(*) FILTER (WHERE statut = 'ok')      AS retenus,\n    COUNT(*) FILTER (WHERE statut = 'rejete')  AS rejetes,\n    COUNT(*) FILTER (WHERE statut = 'saute')   AS sautes,\n    COUNT(*) FILTER (WHERE statut = 'echec')   AS echecs,\n    COALESCE(SUM(tokens_in),  0) AS t_in,\n    COALESCE(SUM(tokens_out), 0) AS t_out\n  FROM pipeline_items\n  WHERE run_id = $1\n)\nUPDATE pipeline_runs r\nSET termine_le = NOW(),\n    statut     = 'termine',\n    nb_retenus = bilan.retenus,\n    nb_rejetes = bilan.rejetes,\n    nb_sautes  = bilan.sautes,\n    nb_echecs  = bilan.echecs,\n    cout_usd   = ROUND((bilan.t_in / 1000000.0) * 1 + (bilan.t_out / 1000000.0) * 5, 4)\nFROM bilan\nWHERE r.id = $1\nRETURNING r.*;",
+        "options": {
+          "queryReplacement": "={{ [$('Préparer le run').first().json.run_id] }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000017",
+      "name": "Clôturer le run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        860,
+        240
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER",
+          "name": "Supabase — pipeline"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a01",
+              "leftValue": "={{ $json.nb_entrees > 0 ? $json.nb_echecs / $json.nb_entrees : 0 }}",
+              "rightValue": "={{ $('Configuration').first().json.taux_echec_alerte }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000018",
+      "name": "Trop d'échecs ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        140
+      ],
+      "notesInFlow": true,
+      "notes": "Un pipeline qui échoue en silence est pire qu'un pipeline qui tombe. Au-delà du seuil, on prévient."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Configuration').first().json.email_alerte }}",
+        "subject": "=[Pipeline agences] {{ $json.nb_echecs }} échecs sur {{ $json.nb_entrees }} — run {{ $json.id.slice(0, 8) }}",
+        "emailFormat": "text",
+        "message": "=Le run {{ $json.id }} s'est terminé avec un taux d'échec anormal.\n\nEntrées      : {{ $json.nb_entrees }}\nRetenues     : {{ $json.nb_retenus }}\nRejetées     : {{ $json.nb_rejetes }}\nSautées      : {{ $json.nb_sautes }}\nÉchecs       : {{ $json.nb_echecs }}\nCoût         : {{ $json.cout_usd }} $\n\nDétail des échecs :\n\n  SELECT domaine, etape_echec, erreur\n  FROM pipeline_items\n  WHERE run_id = '{{ $json.id }}' AND statut = 'echec';\n\nCauses les plus fréquentes : credential expiré, quota API atteint, ou une liste de domaines de mauvaise qualité.",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000019",
+      "name": "Alerter par email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1320,
+        60
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER",
+          "name": "SMTP — alertes"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Configuration').first().json.email_alerte }}",
+        "subject": "[Pipeline agences] Credential Anthropic invalide — run interrompu",
+        "emailFormat": "text",
+        "message": "=Le contrôle de credentials a échoué avant le démarrage du run : aucun site n'a été scrapé et aucun appel n'a été facturé.\n\nErreur : {{ $json.error?.message ?? $json.error ?? 'non décrite' }}\n\nÀ vérifier : la clé API Anthropic (expirée, révoquée, ou quota d'organisation atteint).",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000001a",
+      "name": "Alerter (credential invalide)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -40,
+        640
+      ],
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Échec au plus tôt : on découvre le problème avant de dépenser, pas après.",
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER",
+          "name": "SMTP — alertes"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Lancer le run": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (usage réel)": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Contrôler les credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contrôler les credentials": {
+      "main": [
+        [
+          {
+            "node": "Préparer le run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alerter (credential invalide)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Préparer le run": {
+      "main": [
+        [
+          {
+            "node": "Ouvrir le run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ouvrir le run": {
+      "main": [
+        [
+          {
+            "node": "Reprendre les domaines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reprendre les domaines": {
+      "main": [
+        [
+          {
+            "node": "Boucle par domaine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Boucle par domaine": {
+      "main": [
+        [
+          {
+            "node": "Clôturer le run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Déjà traité ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déjà traité ?": {
+      "main": [
+        [
+          {
+            "node": "Domaine nouveau ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Domaine nouveau ?": {
+      "main": [
+        [
+          {
+            "node": "Récupérer le site",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sauté (déjà traité)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Récupérer le site": {
+      "main": [
+        [
+          {
+            "node": "Extraire le texte",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Échec (dead letter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire le texte": {
+      "main": [
+        [
+          {
+            "node": "Analyser avec Claude",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Échec (dead letter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyser avec Claude": {
+      "main": [
+        [
+          {
+            "node": "Valider la réponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Échec (dead letter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider la réponse": {
+      "main": [
+        [
+          {
+            "node": "Score au-dessus du seuil ?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Échec (dead letter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score au-dessus du seuil ?": {
+      "main": [
+        [
+          {
+            "node": "Créer la fiche Notion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejeté (sous le seuil)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Créer la fiche Notion": {
+      "main": [
+        [
+          {
+            "node": "Retenu",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Échec (dead letter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retenu": {
+      "main": [
+        [
+          {
+            "node": "Journaliser l'item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejeté (sous le seuil)": {
+      "main": [
+        [
+          {
+            "node": "Journaliser l'item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sauté (déjà traité)": {
+      "main": [
+        [
+          {
+            "node": "Journaliser l'item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Échec (dead letter)": {
+      "main": [
+        [
+          {
+            "node": "Journaliser l'item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Journaliser l'item": {
+      "main": [
+        [
+          {
+            "node": "Pause entre deux sites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pause entre deux sites": {
+      "main": [
+        [
+          {
+            "node": "Boucle par domaine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clôturer le run": {
+      "main": [
+        [
+          {
+            "node": "Trop d'échecs ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trop d'échecs ?": {
+      "main": [
+        [
+          {
+            "node": "Alerter par email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "executionTimeout": 3600
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "pipeline-agences-noriax"
+  },
+  "tags": []
+}

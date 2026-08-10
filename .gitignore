@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.local
+*.log
+
+# Exports n8n de travail : le workflow de référence est workflow/pipeline-agences.json
+*.export.json

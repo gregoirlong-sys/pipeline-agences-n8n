@@ -1,0 +1,28 @@
+{
+  "name": "pipeline-agences-n8n",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pipeline n8n d'enrichissement et de scoring de prospects B2B — scraping, analyse Claude, écriture CRM, avec reprises, idempotence et journalisation.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "valider": "node scripts/valider-workflow.mjs && node scripts/code-workflow.mjs verifier",
+    "code:extraire": "node scripts/code-workflow.mjs extraire",
+    "code:injecter": "node scripts/code-workflow.mjs injecter",
+    "test:analyse": "node scripts/tester-analyse.mjs"
+  },
+  "keywords": [
+    "n8n",
+    "automation",
+    "lead-generation",
+    "web-scraping",
+    "claude",
+    "anthropic",
+    "notion",
+    "workflow"
+  ],
+  "author": "Grégoire Long <gregoire@noriax.fr> (https://noriax.fr)",
+  "license": "MIT"
+}
