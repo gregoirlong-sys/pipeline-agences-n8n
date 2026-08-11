@@ -5,3 +5,6 @@ node_modules/
 
 # Exports n8n de travail : le workflow de référence est workflow/pipeline-agences.json
 *.export.json
+
+# Version locale du workflow : identifiants et reglages propres a une installation
+local/
