@@ -66,7 +66,30 @@ for (const n of wf.nodes.filter((n) => n.type === "n8n-nodes-base.code")) {
   }
 }
 
-// ── 4. Les références $('Nœud') existent-elles ? ───────────────
+// ── 4. Les paramètres obligatoires sont-ils présents ? ────────
+//
+// n8n ne refuse l'exécution qu'au moment du clic, avec un message du genre
+// « Parameter "From Email" is required ». Autant l'apprendre ici. La table
+// ci-dessous ne couvre que les types utilisés par ce workflow : elle grandit
+// au fil des erreurs rencontrées plutôt que d'essayer d'être exhaustive.
+
+const OBLIGATOIRES = {
+  "n8n-nodes-base.emailSend": ["fromEmail", "toEmail", "subject"],
+  "n8n-nodes-base.httpRequest": ["url"],
+  "n8n-nodes-base.code": ["jsCode"],
+  "n8n-nodes-base.wait": ["amount"],
+};
+
+for (const n of wf.nodes) {
+  for (const champ of OBLIGATOIRES[n.type] ?? []) {
+    const v = n.parameters?.[champ];
+    if (v === undefined || v === null || v === "") {
+      erreurs.push(`"${n.name}" (${n.type}) : paramètre obligatoire manquant « ${champ} »`);
+    }
+  }
+}
+
+// ── 5. Les références $('Nœud') existent-elles ? ───────────────
 //
 // C'est l'erreur la plus fréquente : on renomme un nœud dans l'éditeur et les
 // expressions qui le référencent cassent silencieusement.

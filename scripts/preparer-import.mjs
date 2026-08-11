@@ -63,18 +63,29 @@ db.close();
 // ── Injection ─────────────────────────────────────────────────
 
 let rattaches = 0;
-const manquants = new Set();
+const desactives = [];
 
 for (const noeud of wf.nodes) {
   if (!noeud.credentials) continue;
+  let complet = true;
   for (const type of Object.keys(noeud.credentials)) {
     const trouve = parType.get(type);
     if (trouve) {
       noeud.credentials[type] = { id: trouve.id, name: trouve.name };
       rattaches++;
     } else {
-      manquants.add(`${type} (nœud « ${noeud.name} »)`);
+      complet = false;
     }
+  }
+  // n8n refuse de démarrer un workflow dès qu'un seul nœud est incomplet, même
+  // si ce nœud n'est atteint qu'en cas de panne. On désactive donc ce qui n'a
+  // pas d'identifiant : le reste du workflow tourne, et le nœud se réactive
+  // tout seul au prochain passage ici une fois l'identifiant créé.
+  if (!complet) {
+    noeud.disabled = true;
+    desactives.push(`${noeud.name} (${Object.keys(noeud.credentials).join(", ")})`);
+  } else if (noeud.disabled) {
+    delete noeud.disabled;
   }
 }
 
@@ -95,5 +106,5 @@ writeFileSync(SORTIE, JSON.stringify(wf, null, 2) + "\n", { encoding: "utf8" });
 
 console.log(`✅ ${SORTIE}`);
 console.log(`   ${rattaches} rattachement(s) d'identifiant`);
-for (const m of manquants) console.log(`   ⚠️  aucun identifiant de type ${m}`);
+for (const d of desactives) console.log(`   ⏸️  désactivé faute d'identifiant : ${d}`);
 console.log(`\nImporter :\n   npx n8n import:workflow --input=${SORTIE}`);

@@ -779,10 +779,11 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Configuration').first().json.email_alerte }}",
+        "fromEmail": "={{ $('Configuration').first().json.email_alerte }}",
+        "toEmail": "={{ $('Configuration').first().json.email_alerte }}",
         "subject": "=[Pipeline agences] {{ $json.nb_echecs }} échecs sur {{ $json.nb_entrees }} — run {{ $json.id.slice(0, 8) }}",
         "emailFormat": "text",
-        "message": "=Le run {{ $json.id }} s'est terminé avec un taux d'échec anormal.\n\nEntrées      : {{ $json.nb_entrees }}\nRetenues     : {{ $json.nb_retenus }}\nRejetées     : {{ $json.nb_rejetes }}\nSautées      : {{ $json.nb_sautes }}\nÉchecs       : {{ $json.nb_echecs }}\nCoût         : {{ $json.cout_usd }} $\n\nDétail des échecs :\n\n  SELECT domaine, etape_echec, erreur\n  FROM pipeline_items\n  WHERE run_id = '{{ $json.id }}' AND statut = 'echec';\n\nCauses les plus fréquentes : credential expiré, quota API atteint, ou une liste de domaines de mauvaise qualité.",
+        "text": "=Le run {{ $json.id }} s'est terminé avec un taux d'échec anormal.\n\nEntrées      : {{ $json.nb_entrees }}\nRetenues     : {{ $json.nb_retenus }}\nRejetées     : {{ $json.nb_rejetes }}\nSautées      : {{ $json.nb_sautes }}\nÉchecs       : {{ $json.nb_echecs }}\nCoût         : {{ $json.cout_usd }} $\n\nDétail des échecs :\n\n  SELECT domaine, etape_echec, erreur\n  FROM pipeline_items\n  WHERE run_id = '{{ $json.id }}' AND statut = 'echec';\n\nCauses les plus fréquentes : credential expiré, quota API atteint, ou une liste de domaines de mauvaise qualité.",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-000000000019",
@@ -803,10 +804,11 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Configuration').first().json.email_alerte }}",
+        "fromEmail": "={{ $('Configuration').first().json.email_alerte }}",
+        "toEmail": "={{ $('Configuration').first().json.email_alerte }}",
         "subject": "[Pipeline agences] Credential Anthropic invalide — run interrompu",
         "emailFormat": "text",
-        "message": "=Le contrôle de credentials a échoué avant le démarrage du run : aucun site n'a été scrapé et aucun appel n'a été facturé.\n\nErreur : {{ $json.error?.message ?? $json.error ?? 'non décrite' }}\n\nÀ vérifier : la clé API Anthropic (expirée, révoquée, ou quota d'organisation atteint).",
+        "text": "=Le contrôle de credentials a échoué avant le démarrage du run : aucun site n'a été scrapé et aucun appel n'a été facturé.\n\nErreur : {{ $json.error?.message ?? $json.error ?? 'non décrite' }}\n\nÀ vérifier : la clé API Anthropic (expirée, révoquée, ou quota d'organisation atteint).",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-00000000001a",
