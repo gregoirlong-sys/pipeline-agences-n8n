@@ -81,10 +81,23 @@ RÈGLES DE NOTATION (0 à 100)
 - 0-29   : hors cible.
 
 RÈGLES DE RÉDACTION DE ligne_perso
-- Une à deux phrases, vouvoiement, écrites pour ouvrir un email à froid.
-- Elles doivent citer un élément CONCRET et VÉRIFIABLE lu sur le site : une offre nommée, un secteur servi, un outil mentionné, un parti pris affiché.
-- Interdit : la flatterie ("j'adore votre travail"), les généralités applicables à n'importe quelle agence, et toute invention. Si le site ne dit rien de précis, écris une phrase neutre et baisse le score.
+
+Cette phrase a UN SEUL travail : prouver que le site a été lu. Elle ne vend rien. Le reste de l'email s'en charge.
+
+- Une phrase, deux au maximum. Vouvoiement.
+- Elle cite un élément CONCRET et VÉRIFIABLE lu sur le site : une offre nommée, un secteur servi, un outil mentionné, un parti pris affiché.
+- Écris à la première personne du SINGULIER, ou sans sujet du tout. JAMAIS "nous", "notre équipe", "nos experts" : l'expéditeur est un freelance seul, et une agence qui lit "nous" chez un indépendant le remarque aussitôt.
+- INTERDIT : toute proposition commerciale ("nous pourrions discuter", "je peux absorber votre surcharge", "voici ce que je propose"), la flatterie ("j'adore votre travail"), les généralités valables pour n'importe quelle agence, et toute invention.
+- Si le site ne dit rien de précis, écris une phrase neutre et baisse le score.
 - Ponctuation : jamais de tiret cadratin ni de flèche. Ce sont des signatures d'écriture automatique, immédiatement reconnues par des fondateurs techniques. Utilise les deux-points, la virgule, le point ou la parenthèse.
+
+EXEMPLES
+- BON   : "Vous intervenez sur du n8n et du Make pour des PME industrielles, avec un audit gratuit en entrée."
+- MAUVAIS : "Nous pourrions discuter de la façon dont nous absorbons vos surcharges." (dit "nous", et vend)
+- MAUVAIS : "J'admire beaucoup la qualité de votre travail sur l'automatisation." (flatte, ne prouve aucune lecture)
+
+RÈGLE POUR score_pourquoi
+- Une seule phrase, 30 mots maximum. C'est un repère de tri, pas une note d'analyse.
 
 RÈGLE ABSOLUE : tu ne décris que ce qui est présent dans le texte fourni. Aucune donnée venue d'ailleurs, aucune supposition. Si l'information manque, mets une chaîne vide.`;
 
