@@ -89,7 +89,41 @@ for (const n of wf.nodes) {
   }
 }
 
-// ── 5. Les références $('Nœud') existent-elles ? ───────────────
+// ── 5. Les expressions {{ ... }} sont-elles du JS valide ? ────
+//
+// n8n accepte une expression syntaxiquement fausse à l'import et n'échoue
+// qu'à l'exécution, avec un « invalid syntax » qui ne dit ni quel nœud ni
+// quel champ. On vérifie donc la syntaxe ici. Les variables n8n ($json, $())
+// ne sont pas définies à ce stade : seule la forme est contrôlée, ce qui
+// suffit à attraper guillemets mal échappés, parenthèses et crochets ouverts.
+
+function parcourir(valeur, chemin, visite) {
+  if (typeof valeur === "string") visite(valeur, chemin);
+  else if (Array.isArray(valeur)) valeur.forEach((v, i) => parcourir(v, `${chemin}[${i}]`, visite));
+  else if (valeur && typeof valeur === "object") {
+    for (const [k, v] of Object.entries(valeur)) parcourir(v, `${chemin}.${k}`, visite);
+  }
+}
+
+for (const n of wf.nodes) {
+  // Le corps des nœuds Code n'est pas une expression : déjà validé plus haut.
+  if (n.type === "n8n-nodes-base.code") continue;
+  parcourir(n.parameters, "", (texte, chemin) => {
+    for (const m of texte.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+      const expr = m[1].trim();
+      if (!expr) continue;
+      try {
+        new Function(`return (${expr});`);
+      } catch (e) {
+        erreurs.push(
+          `"${n.name}"${chemin} : expression invalide {{ ${expr.slice(0, 70)} }} → ${e.message}`
+        );
+      }
+    }
+  });
+}
+
+// ── 6. Les références $('Nœud') existent-elles ? ───────────────
 //
 // C'est l'erreur la plus fréquente : on renomme un nœud dans l'éditeur et les
 // expressions qui le référencent cassent silencieusement.

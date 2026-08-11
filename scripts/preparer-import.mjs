@@ -93,8 +93,21 @@ const configNoeud = wf.nodes.find((n) => n.name === "Configuration");
 for (const [cle, valeur] of Object.entries(config)) {
   if (!valeur) continue;
   const champ = configNoeud?.parameters?.assignments?.assignments?.find((a) => a.name === cle);
-  if (champ) champ.value = valeur;
-  else console.warn(`⚠️  Champ « ${cle} » absent du nœud Configuration.`);
+  if (!champ) {
+    console.warn(`⚠️  Champ « ${cle} » absent du nœud Configuration.`);
+    continue;
+  }
+  // Piège classique quand la config est produite par un script : la valeur
+  // traverse deux encodages et arrive avec des barres obliques littérales
+  // (["x"] devient [\"x\"]). n8n l'accepte à l'import puis échoue à
+  // l'exécution avec un « invalid syntax » qui ne dit pas d'où il vient.
+  if (typeof valeur === "string" && valeur.includes('\\"')) {
+    console.error(`❌ Champ « ${cle} » : contient \\" (double échappement).`);
+    console.error(`   Reçu : ${valeur}`);
+    console.error(`   Dans local/config.json, utilisez des apostrophes simples à l'intérieur de l'expression.`);
+    process.exit(1);
+  }
+  champ.value = valeur;
 }
 
 wf.id = ID_WORKFLOW;
