@@ -58,11 +58,27 @@ for (const n of wf.nodes) {
 
 // ── 3. Les nœuds Code sont-ils du JavaScript valide ? ─────────
 
+// Le bac à sable des nœuds Code n'expose qu'un sous-ensemble des globales
+// habituelles de Node. Les absentes ci-dessous passent l'import sans erreur et
+// ne cassent qu'à l'exécution, souvent au milieu d'un traitement.
+const GLOBALES_ABSENTES = ["crypto", "require", "process", "Buffer", "fetch", "__dirname"];
+
 for (const n of wf.nodes.filter((n) => n.type === "n8n-nodes-base.code")) {
+  const code = n.parameters.jsCode ?? "";
   try {
-    new Function(n.parameters.jsCode);
+    new Function(code);
   } catch (e) {
     erreurs.push(`Syntaxe JS invalide dans "${n.name}" : ${e.message}`);
+  }
+  // Hors commentaires, et hors usage protégé par try/catch ou typeof.
+  const sansCommentaires = code.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const g of GLOBALES_ABSENTES) {
+    const usage = new RegExp(`(?<![.\\w$])${g}\\s*[.(\\[]`);
+    if (usage.test(sansCommentaires) && !new RegExp(`typeof\\s+${g}`).test(sansCommentaires)) {
+      avertissements.push(
+        `"${n.name}" utilise « ${g} », absent du bac à sable n8n — vérifier qu'il est protégé par un try/catch.`
+      );
+    }
   }
 }
 

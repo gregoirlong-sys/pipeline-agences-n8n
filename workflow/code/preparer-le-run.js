@@ -12,7 +12,20 @@
 
 const config = $('Configuration').first().json;
 
-const runId = crypto.randomUUID();
+// Le bac à sable des nœuds Code n'expose ni `crypto` ni `require` : un appel à
+// l'un des deux passe l'import sans broncher et n'échoue qu'à l'exécution.
+// On prend l'identifiant d'exécution n8n quand il existe, ce qui relie une
+// ligne du journal à son exécution visible dans l'interface. Sinon on compose
+// un identifiant unique à la main.
+let runId;
+try {
+  runId = $execution?.id ? `n8n-${$execution.id}` : null;
+} catch {
+  runId = null;
+}
+if (!runId) {
+  runId = `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function normaliserDomaine(entree) {
   return String(entree)
