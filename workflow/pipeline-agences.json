@@ -152,7 +152,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO pipeline_runs (id, declencheur, nb_entrees)\nVALUES ($1::text, $2::text, $3::integer)\nON CONFLICT (id) DO NOTHING;",
+        "query": "-- Un run interrompu (fenêtre fermée, erreur non rattrapée, machine\n-- éteinte) ne passe jamais par la clôture et resterait « en cours »\n-- indéfiniment, faussant tout suivi. On solde donc les traînards au\n-- démarrage du run suivant : c'est le seul moment où l'on sait de façon\n-- certaine qu'ils ne tournent plus.\nWITH soldes AS (\n  UPDATE pipeline_runs\n  SET statut = 'interrompu', termine_le = NOW()\n  WHERE statut = 'en_cours'\n    AND demarre_le < NOW() - INTERVAL '1 hour'\n  RETURNING 1\n)\nINSERT INTO pipeline_runs (id, declencheur, nb_entrees)\nVALUES ($1::text, $2::text, $3::integer)\nON CONFLICT (id) DO NOTHING;",
         "options": {
           "queryReplacement": "={{ [$json.run_id, $json.declencheur, $json.nb_entrees] }}"
         }
@@ -206,7 +206,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT 1 AS deja_vu\nFROM pipeline_items\nWHERE domaine = $1::text\n  AND statut IN ('ok', 'rejete')\nLIMIT 1;",
+        "query": "-- COUNT plutôt que SELECT 1 : renvoie toujours exactement une ligne,\n-- avec 0 quand le domaine est inconnu. Une requête qui ne renvoie parfois\n-- aucune ligne oblige le test suivant à distinguer « champ absent » de\n-- « champ nul », et le type change selon le cas.\nSELECT COUNT(*)::int AS deja_vu\nFROM pipeline_items\nWHERE domaine = $1::text\n  AND statut IN ('ok', 'rejete');",
         "options": {
           "queryReplacement": "={{ [$json.domaine] }}"
         }
@@ -241,12 +241,11 @@
           "conditions": [
             {
               "id": "d01",
-              "leftValue": "={{ $json.deja_vu }}",
-              "rightValue": "",
+              "leftValue": "={{ Number($json.deja_vu ?? 0) }}",
+              "rightValue": 0,
               "operator": {
-                "type": "object",
-                "operation": "notExists",
-                "singleValue": true
+                "type": "number",
+                "operation": "equals"
               }
             }
           ],
