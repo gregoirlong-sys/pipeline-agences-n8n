@@ -11,7 +11,13 @@
     "valider": "node scripts/valider-workflow.mjs && node scripts/code-workflow.mjs verifier",
     "code:extraire": "node scripts/code-workflow.mjs extraire",
     "code:injecter": "node scripts/code-workflow.mjs injecter",
+    "preparer": "node scripts/preparer-import.mjs",
+    "runs": "node scripts/voir-runs.mjs",
+    "rejouer": "node scripts/rejouer.mjs",
     "test:analyse": "node scripts/tester-analyse.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.21.0"
   },
   "keywords": [
     "n8n",

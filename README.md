@@ -23,6 +23,23 @@ et la qualité de la dernière ligne rédigée ne vaut pas celle de la première
 pipeline traite quarante domaines sans surveillance, pour **moins d'un centime
 par fiche**, et la quarantième est notée avec les mêmes critères que la première.
 
+## Chiffres d'un run réel
+
+Premier passage en production, sur cinq agences non encore qualifiées :
+
+| | |
+|---|---|
+| Durée | 55 secondes |
+| Coût | 0,0201 $ |
+| Retenues | 2 (scores 85 et 78), fiches créées |
+| Rejetées | 2 (score 25), journalisées sans fiche |
+| Échec | 1 (site en 503), parti en dead letter, rejouable |
+
+Les deux rejets sont ceux qu'on attend d'un tri utile : une structure de plus de
+vingt-cinq personnes avec un process achat, et un agrégateur de prestataires qui
+n'est pas une agence. Ni l'une ni l'autre n'aurait été détectée par des
+mots-clés.
+
 ## Ce qui fait la différence en production
 
 Un workflow qui marche sur cinq sites choisis n'est pas un workflow. Les points
@@ -111,6 +128,32 @@ node scripts/code-workflow.mjs verifier   # échoue si les deux divergent
 `injecter` refuse d'écrire du JavaScript qui ne compile pas : on n'importe
 jamais un workflow cassé.
 
+## Exploitation
+
+Ce qu'on veut savoir une fois le pipeline en service : ce qu'il a fait, ce qui a
+cassé, et comment y revenir.
+
+```bash
+npm run runs              # bilan des derniers runs, item par item
+npm run runs -- --echecs  # la dead letter, avec l'étape et le message
+```
+
+L'idempotence protège des doublons jusqu'au jour où l'on veut justement
+retraiter quelque chose : prompt corrigé, seuil déplacé, site qui était en
+panne. C'est le rôle de `rejouer` — il archive la fiche Notion déjà créée
+(corbeille, réversible) **puis** efface la trace du journal, dans cet ordre :
+si l'archivage échoue, la trace subsiste et continue de protéger du doublon.
+
+```bash
+npm run rejouer -- devflows.eu flowt.fr --dry-run
+npm run rejouer -- devflows.eu flowt.fr
+npm run rejouer -- --echecs      # tout ce qui est en dead letter
+```
+
+Les lignes en `echec` ne sont **pas** couvertes par l'idempotence : un site
+momentanément injoignable est automatiquement retenté au run suivant, sans
+manipulation.
+
 ## Structure
 
 ```
@@ -120,10 +163,25 @@ workflow/
 sql/
   001_journalisation.sql   pipeline_runs + pipeline_items
 scripts/
-  valider-workflow.mjs     JSON, connexions, syntaxe JS, références inter-nœuds
+  valider-workflow.mjs     structure, connexions, syntaxe JS, expressions,
+                           paramètres obligatoires, globales hors bac à sable
   code-workflow.mjs        synchronisation JSON ↔ .js
+  preparer-import.mjs      version locale : identifiants et réglages injectés
+  voir-runs.mjs            bilan des exécutions, lu depuis le journal
+  rejouer.mjs              remet des domaines en file
   tester-analyse.mjs       rejoue la logique sur un domaine, hors n8n
 ```
+
+### Sur le validateur
+
+n8n accepte à l'import des workflows qui échoueront à l'exécution, et ses
+messages d'erreur ne disent alors ni quel nœud ni quel champ. Chaque famille
+d'erreur rencontrée en construisant ce pipeline a donc été ajoutée au
+validateur : noms de paramètres attendus par type de nœud, expressions
+`{{ }}` syntaxiquement fausses (le double échappement produit par un script
+générateur, notamment), et usage de globales absentes du bac à sable des nœuds
+Code (`crypto`, `require`, `process`…). C'est une seconde de vérification
+contre un aller-retour dans l'interface.
 
 ## Adapter à un autre usage
 
